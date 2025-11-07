@@ -1,0 +1,307 @@
+[include mmu/optional/mmu_menu.cfg]
+#[include mmu/base/*.cfg]
+#[include mmu/optional/client_macros.cfg]
+#[include mmu/addons/blobifier.cfg]
+[include KAMP_Settings.cfg]  
+[include configs/*.cfg]
+#[include reshelper.cfg] 
+#[include sb2209.cfg]
+#[include stealthburner_leds.cfg]
+[include mainsail.cfg]
+#[include scanner.cfg]
+
+[exclude_object]
+
+[idle_timeout]
+timeout: 1800
+
+[virtual_sdcard]
+path: ~/printer_data/gcodes
+on_error_gcode: CANCEL_PRINT
+
+[danger_options]
+multi_mcu_trsync_timeout:   0.05
+
+[mcu]
+##	[X in MOTOR1] - B Motor
+##	[Y in MOTOR2] - A Motor
+##	[E in MOTOR8] - Extruder
+##	Obtain definition by "ls -l /dev/serial/by-id/" then unplug to verify
+##--------------------------------------------------------------------
+canbus_uuid: 9273fe88835f
+#serial: /dev/serial/by-id/usb-Klipper_stm32g0b1xx_250028000C504B4633373520-if00
+#restart_method: command
+##--------------------------------------------------------------------
+
+[filament_switch_sensor filament_sensor]
+switch_pin: ^EBB:gpio21
+pause_on_runout: True
+insert_gcode:
+    M117 Insert Detected
+runout_gcode:
+    M117 Runout Detected
+    #LCDRGB R=1 G=0 B=0  # Turn LCD red
+    #BEEP I=12
+
+[printer]
+kinematics: corexy
+max_velocity: 500  
+max_accel: 20000    			#Max 4000
+max_z_velocity: 20			#Max 15 for 12V TMC Drivers, can increase for 24V
+max_z_accel: 350
+square_corner_velocity: 5.0
+
+
+
+# Enable arcs support
+[gcode_arcs]
+resolution: 0.1
+
+[temperature_sensor Manta M8P]
+sensor_type: temperature_mcu
+
+[temperature_sensor CM4]
+sensor_type: temperature_host
+
+#[resonance_tester]
+#accel_chip: adxl345
+#accel_per_hz: 100
+#probe_points: 175,175,50
+
+[input_shaper]
+shaper_type_x: ei       #mzv  #EI
+shaper_freq_x: 54.4     #44.8  #54.4
+damping_ratio_x: 0.083
+
+shaper_type_y: mzv
+shaper_freq_y: 36.6
+damping_ratio_y: 0.061
+
+[gcode_macro PAUSE]
+description: Pause the actual running print
+rename_existing: PAUSE_BASE
+gcode:
+    ##### set defaults #####
+    {% set x = params.X|default(345) %}      #edit to your park position
+    {% set y = params.Y|default(5) %}      #edit to your park position
+    {% set z = params.Z|default(15)|float %} #edit to your park position
+    {% set e = params.E|default(1.5) %}        #edit to your retract length
+    ##### calculate save lift position #####
+    {% set max_z = printer.toolhead.axis_maximum.z|float %}
+    {% set act_z = printer.toolhead.position.z|float %}
+    {% set lift_z = z|abs %}
+    {% if act_z < (max_z - lift_z) %}
+        {% set z_safe = lift_z %}
+    {% else %}
+        {% set z_safe = max_z - act_z %}
+    {% endif %}
+    ##### end of definitions #####
+    PAUSE_BASE
+    G91
+    {% if printer.extruder.can_extrude|lower == 'true' %}
+      G1 E-{e} F2100
+    {% else %}
+      {action_respond_info("Extruder not hot enough")}
+    {% endif %}
+    {% if "xyz" in printer.toolhead.homed_axes %}    
+      G1 Z{z_safe}
+      G90
+      G1 X{x} Y{y} F6000
+    {% else %}
+      {action_respond_info("Printer not homed")}
+    {% endif %}
+
+[gcode_macro RESUME]
+description: Resume the actual running print
+rename_existing: RESUME_BASE
+gcode:
+    ##### set defaults #####
+    {% set e = params.E|default(1.5) %} #edit to your retract length
+    #### get VELOCITY parameter if specified ####
+    {% if 'VELOCITY' in params|upper %}
+      {% set get_params = ('VELOCITY=' + params.VELOCITY)  %}
+    {%else %}
+      {% set get_params = "" %}
+    {% endif %}
+    ##### end of definitions #####
+    G91
+    {% if printer.extruder.can_extrude|lower == 'true' %}
+      G1 E{e} F2100
+    {% else %}
+      {action_respond_info("Extruder not hot enough")}
+    {% endif %}  
+    RESUME_BASE {get_params}
+
+######################################################################
+# Filament Change
+######################################################################
+
+# M600: Filament Change. This macro will pause the printer, move the
+# tool to the change position, and retract the filament 50mm. Adjust
+# the retraction settings for your own extruder. After filament has
+# been changed, the print can be resumed from its previous position
+# with the "RESUME" gcode.
+
+[pause_resume]
+
+[gcode_macro M600]
+gcode:
+    {% set X = params.X|default(340)|float %}
+    {% set Y = params.Y|default(5)|float %}
+    {% set Z = params.Z|default(15)|float %}
+    SAVE_GCODE_STATE NAME=M600_state
+    PAUSE
+    G91
+    G1 E-.5 F2700
+    G1 Z{Z}
+    G90
+    G1 X{X} Y{Y} F3000
+    G91
+    G1 E-20 F1000
+    RESTORE_GCODE_STATE NAME=M600_state
+
+
+
+#[board_pins]
+#aliases:
+    # EXP1 header
+#    EXP1_1=PE9, EXP1_2=PE10,
+#    EXP1_3=PE11, EXP1_4=PE12,
+#    EXP1_5=PE13, EXP1_6=PE14,    # Slot in the socket on this side
+#    EXP1_7=PE15, EXP1_8=PB10,
+#    EXP1_9=<GND>, EXP1_10=<5V>,
+
+    # EXP2 header
+#    EXP2_1=PB14, EXP2_2=PB13,
+#    EXP2_3=PF7, EXP2_4=PB12,
+#    EXP2_5=PE7, EXP2_6=PB11,      # Slot in the socket on this side
+#    EXP2_7=PE8, EXP2_8=<RST>,
+#    EXP2_9=<GND>, EXP2_10=PC5
+
+# See the sample-lcd.cfg file for definitions of common LCD displays.
+
+#####################################################################
+# 	Displays
+#####################################################################
+
+## 	Uncomment the display that you have
+#--------------------------------------------------------------------
+
+#[display]
+##	RepRapDiscount 128x64 Full Graphic Smart Controller
+#lcd_type: st7920
+#cs_pin: EXP1_4
+#sclk_pin: EXP1_5
+#sid_pin: EXP1_3
+#menu_timeout: 40
+#encoder_pins: ^EXP2_5, ^EXP2_3
+#click_pin: ^!EXP1_2
+
+#[output_pin beeper]
+#pin: EXP1_1
+
+#--------------------------------------------------------------------
+
+#[display]
+#	mini12864 LCD Display
+#lcd_type: uc1701
+#cs_pin: EXP1_3
+#a0_pin: EXP1_4
+#rst_pin: EXP1_5
+#encoder_pins: ^EXP2_5, ^EXP2_3
+#click_pin: ^!EXP1_2
+#contrast: 63
+#spi_software_miso_pin: EXP2_1
+#spi_software_mosi_pin: EXP2_6
+#spi_software_sclk_pin: EXP2_2
+
+#[neopixel btt_mini12864]
+#	To control Neopixel RGB in mini12864 display
+#pin: EXP1_6
+#chain_count: 3
+#initial_RED: 0.1
+#initial_GREEN: 0.5
+#initial_BLUE: 0.0
+#color_order: RGB
+
+##	Set RGB values on boot up for each Neopixel. 
+##	Index 1 = display, Index 2 and 3 = Knob
+#[delayed_gcode setdisplayneopixel]
+#initial_duration: 1
+#gcode:
+#       SET_LED LED=btt_mini12864 RED=1 GREEN=1 BLUE=1 INDEX=1 TRANSMIT=0
+#       SET_LED LED=btt_mini12864 RED=1 GREEN=0 BLUE=0 INDEX=2 TRANSMIT=0
+#       SET_LED LED=btt_mini12864 RED=1 GREEN=0 BLUE=0 INDEX=3 
+
+#--------------------------------------------------------------------
+[shaketune]
+# result_folder: ~/printer_data/config/ShakeTune_results
+#    Path where the processed results will be stored. If the folder doesn't exist,
+#    it will be automatically created. You can change this if you'd like to store 
+#    results in a different location.
+# number_of_results_to_keep: 10
+#    This setting defines how many results you want to keep in the result folder.
+#    Once the specified number is exceeded, older results will be automatically deleted
+#    to free up space on the SD card and avoid cluttering the results folder.
+# keep_raw_data: False
+#    If set to True, Shake&Tune will store both the processed graphs and the raw accelerometer
+#    .stdata files in the results folder. This can be useful for debugging or archiving purposes.
+#    Please always attach them when reporting any issues on GitHub or Discord.
+# show_macros_in_webui: True
+#    Mainsail and Fluidd doesn't create buttons for system commands (macros that are not part
+#    of the printer.cfg file). This option allow Shake&Tune to inject them into the webui at runtime.
+#    If set to False, the macros will be hidden but still accessible from the console by typing
+#    their names manually, which can be useful if you prefer to encapsulate them into your own macros.
+# timeout: 600
+#    This defines the maximum processing time (in seconds) to allows to Shake&Tune for generating 
+#    graphs from a .stdata file. 10 minutes should be more than enough in most cases, but if you have
+#    slower hardware (e.g., older SD cards or low-performance devices), increase it to prevent timeouts.
+# measurements_chunk_size: 2
+#    Each Shake&Tune command uses the accelerometer to take multiple measurements. By default,
+#    Shake&Tune will write a chunk of data to disk every two measurements, and at the end of the
+#    command will merge these chunks into the final .stdata file for processing. "2" is a very
+#    conservative setting to avoid Klipper Timer Too Close errors on lower end devices with little
+#    RAM, and should work for everyone. However, if you are using a powerful computer, you may
+#    wish to increase this value to keep more measurements in memory (e.g., 15-20) before writing
+#    the chunk and avoid stressing the filesystem too much.
+# max_freq: 200
+#    This setting defines the maximum frequency at which the calculation of the power spectral density
+#    is cutoff. The default value should be fine for most machines and accelerometer combinations and
+#    avoid touching it unless you know what you're doing.
+# dpi: 300
+#    Controls the resolution of the generated graphs. The default value of 300 dpi was optimized
+#    and strikes a balance between performance and readability, ensuring that graphs are clear
+#    without using too much RAM to generate them. Usually, you shouldn't need to change this value.
+
+#*# <---------------------- SAVE_CONFIG ---------------------->
+#*# DO NOT EDIT THIS BLOCK OR BELOW. The contents are auto-generated.
+#*#
+#*# [extruder]
+#*#
+#*# [probe]
+#*# z_offset = 9.870
+#*#
+#*# [bed_mesh default]
+#*# version = 1
+#*# points =
+#*# 	0.056171, 0.042066, 0.038833, 0.049100, 0.052609, 0.054987, 0.057163, 0.065484, 0.073822
+#*# 	0.057928, 0.044046, 0.049170, 0.051927, 0.057124, 0.063819, 0.064381, 0.062020, 0.051851
+#*# 	0.053892, 0.036104, 0.038991, 0.045822, 0.045888, 0.042812, 0.061953, 0.061970, 0.055854
+#*# 	0.014956, -0.005350, -0.013813, -0.005186, -0.005732, 0.007248, 0.012997, 0.006974, 0.012532
+#*# 	0.027137, 0.012867, 0.003542, 0.013439, 0.013476, 0.026746, 0.037139, 0.021783, 0.029972
+#*# 	0.063467, 0.061038, 0.052136, 0.060895, 0.068580, 0.079189, 0.070646, 0.089233, 0.100126
+#*# 	0.084118, 0.072888, 0.057297, 0.055854, 0.049391, 0.079970, 0.078676, 0.093122, 0.110332
+#*# 	0.058179, 0.045042, 0.056425, 0.024458, 0.008990, 0.023155, 0.039837, 0.023550, 0.046070
+#*# 	0.082447, 0.066674, 0.052269, 0.048335, 0.057092, 0.062320, 0.066780, 0.068334, 0.067938
+#*# x_count = 9
+#*# y_count = 9
+#*# mesh_x_pps = 2
+#*# mesh_y_pps = 2
+#*# algo = bicubic
+#*# tension = 0.2
+#*# min_x = 40.0
+#*# max_x = 310.0
+#*# min_y = 40.0
+#*# max_y = 310.0
+#*#
+
